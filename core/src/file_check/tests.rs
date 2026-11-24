@@ -210,3 +210,8 @@ fn reports_missing_files_and_directories() {
     );
     assert!(matches!(check_file(folder), Err(CheckFileError::NotFile { path }) if path == folder));
 }
+
+#[test]
+fn rejects_empty_input() {
+    assert!(matches!(check_pe(&[]), Err(CheckFileError::NotPe)));
+}
