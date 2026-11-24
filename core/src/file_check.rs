@@ -1,16 +1,18 @@
 use std::{
-    fs, io,
+    fs::{self, File},
+    io::{self, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
 use goblin::pe::{
     header::{
-        COFF_MACHINE_ARM64, COFF_MACHINE_X86, COFF_MACHINE_X86_64, Header, SIZEOF_COFF_HEADER,
-        SIZEOF_PE_MAGIC,
+        COFF_MACHINE_ARM64, COFF_MACHINE_X86, COFF_MACHINE_X86_64, CoffHeader, DOS_STUB_OFFSET,
+        Header, PE_POINTER_OFFSET, SIZEOF_COFF_HEADER, SIZEOF_PE_MAGIC,
     },
     load_config::LoadConfigData,
     optional_header::{MAGIC_32, MAGIC_64, OptionalHeader},
-    section_table::SectionTable,
+    options::ParseOptions,
+    section_table::{SIZEOF_SECTION_TABLE, SectionTable},
 };
 use thiserror::Error;
 
@@ -19,6 +21,7 @@ use crate::model::{Evidence, FileArchitecture, FileCheck};
 const MACHINE_ARM64EC: u16 = 0xA641;
 const MACHINE_ARM64X: u16 = 0xA64E;
 const ARM64X_RELOCATION: u64 = 6;
+const PE_READ_LIMIT: u64 = 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum CheckFileError {
@@ -34,6 +37,8 @@ pub enum CheckFileError {
     InvalidHeader(#[from] goblin::error::Error),
     #[error("invalid or truncated PE image: {0}")]
     InvalidImage(&'static str),
+    #[error("PE inspection exceeds the {PE_READ_LIMIT}-byte read limit")]
+    ReadLimit,
 }
 
 pub fn check_file(path: &Path) -> Result<FileCheck, CheckFileError> {
@@ -44,8 +49,12 @@ pub fn check_file(path: &Path) -> Result<FileCheck, CheckFileError> {
         });
     }
 
-    let bytes = fs::read(path).map_err(|error| read_error(path, error))?;
-    check_pe(&bytes)
+    let file = File::open(path).map_err(|error| read_error(path, error))?;
+    let length = file
+        .metadata()
+        .map_err(|error| read_error(path, error))?
+        .len();
+    inspect_pe(&mut PeReader::new(file, length, path))
 }
 
 fn read_error(path: &Path, source: io::Error) -> CheckFileError {
@@ -56,11 +65,73 @@ fn read_error(path: &Path, source: io::Error) -> CheckFileError {
     }
 }
 
+struct PeReader<'a, R> {
+    source: R,
+    length: u64,
+    remaining: u64,
+    path: &'a Path,
+}
+
+impl<'a, R: Read + Seek> PeReader<'a, R> {
+    fn new(source: R, length: u64, path: &'a Path) -> Self {
+        Self {
+            source,
+            length,
+            remaining: PE_READ_LIMIT,
+            path,
+        }
+    }
+
+    fn read_at(&mut self, offset: u64, size: u64) -> Result<Vec<u8>, CheckFileError> {
+        if size > self.remaining {
+            return Err(CheckFileError::ReadLimit);
+        }
+        if offset > self.length || size > self.length - offset {
+            return Err(CheckFileError::InvalidImage(
+                "requested PE data extends past the file",
+            ));
+        }
+
+        self.remaining -= size;
+        let mut bytes = vec![0; size as usize];
+        self.source
+            .seek(SeekFrom::Start(offset))
+            .and_then(|_| self.source.read_exact(&mut bytes))
+            .map_err(|error| read_error(self.path, error))?;
+        Ok(bytes)
+    }
+}
+
+#[cfg(test)]
 fn check_pe(bytes: &[u8]) -> Result<FileCheck, CheckFileError> {
-    if !bytes.starts_with(b"MZ") {
+    inspect_pe(&mut PeReader::new(
+        io::Cursor::new(bytes),
+        bytes.len() as u64,
+        Path::new("<memory>"),
+    ))
+}
+
+fn inspect_pe(reader: &mut PeReader<'_, impl Read + Seek>) -> Result<FileCheck, CheckFileError> {
+    let dos = reader.read_at(0, reader.length.min(u64::from(DOS_STUB_OFFSET)))?;
+    if !dos.starts_with(b"MZ") {
         return Err(CheckFileError::NotPe);
     }
-    let header = Header::parse(bytes)?;
+    let pe_offset = read_u32(&dos, PE_POINTER_OFFSET as usize)
+        .map(u64::from)
+        .ok_or_else(|| goblin::error::Error::Malformed("missing PE header pointer".into()))?;
+    let coff_size = (SIZEOF_PE_MAGIC + SIZEOF_COFF_HEADER) as u64;
+    if pe_offset + coff_size > reader.length {
+        return Err(goblin::error::Error::Malformed("incomplete PE file header".into()).into());
+    }
+    let coff_bytes = reader.read_at(pe_offset, coff_size)?;
+    let mut coff_offset = SIZEOF_PE_MAGIC;
+    let coff = CoffHeader::parse(&coff_bytes, &mut coff_offset)?;
+    let section_offset = pe_offset + coff_size + u64::from(coff.size_of_optional_header);
+    let section_end =
+        section_offset + u64::from(coff.number_of_sections) * SIZEOF_SECTION_TABLE as u64;
+    // Goblin checks the DOS stub and PE headers together. Read that prefix only.
+    let headers = reader.read_at(0, section_end.min(reader.length))?;
+    let header = Header::parse(&headers)?;
     let coff = header.coff_header;
     let machine = coff.machine;
     let optional = header
@@ -77,14 +148,11 @@ fn check_pe(bytes: &[u8]) -> Result<FileCheck, CheckFileError> {
         ));
     }
 
-    let mut section_offset = header.dos_header.pe_pointer as usize
-        + SIZEOF_PE_MAGIC
-        + SIZEOF_COFF_HEADER
-        + usize::from(coff.size_of_optional_header);
-    if section_offset > bytes.len() {
-        return Err(CheckFileError::InvalidImage("missing PE section table"));
+    if section_end > reader.length {
+        return Err(CheckFileError::InvalidImage("incomplete PE section table"));
     }
-    let sections = coff.sections(bytes, &mut section_offset)?;
+    let mut section_offset = section_offset as usize;
+    let sections = coff.sections(&headers, &mut section_offset)?;
     for section in &sections {
         if section
             .virtual_address
@@ -95,7 +163,8 @@ fn check_pe(bytes: &[u8]) -> Result<FileCheck, CheckFileError> {
                 "invalid PE section address range",
             ));
         }
-        if section.size_of_raw_data != 0 && section_data(bytes, section).is_none() {
+        let raw_end = u64::from(section.pointer_to_raw_data) + u64::from(section.size_of_raw_data);
+        if section.size_of_raw_data != 0 && raw_end > reader.length {
             return Err(CheckFileError::InvalidImage("incomplete PE section data"));
         }
     }
@@ -126,7 +195,7 @@ fn check_pe(bytes: &[u8]) -> Result<FileCheck, CheckFileError> {
 
     let explanation = match explanation {
         Some(message) => Some(message.to_owned()),
-        None if is_64 => match hybrid_marker(bytes, &optional, &sections) {
+        None if is_64 => match hybrid_marker(reader, &optional, &sections) {
             Ok(marker) => marker.map(str::to_owned),
             Err(error) => Some(format!("Could not verify PE hybrid metadata: {error}")),
         },
@@ -146,34 +215,37 @@ fn check_pe(bytes: &[u8]) -> Result<FileCheck, CheckFileError> {
 }
 
 fn hybrid_marker(
-    bytes: &[u8],
+    reader: &mut PeReader<'_, impl Read + Seek>,
     optional: &OptionalHeader,
     sections: &[SectionTable],
 ) -> Result<Option<&'static str>, String> {
     let Some(&entry) = optional.data_directories.get_load_config_table() else {
         return Ok(None);
     };
-    if entry.virtual_address == 0
-        || entry.size == 0
-        || !sections.iter().any(|section| {
-            entry
-                .virtual_address
-                .checked_sub(section.virtual_address)
-                .and_then(|offset| offset.checked_add(entry.size))
-                .is_some_and(|end| end <= section.size_of_raw_data)
-        })
-    {
-        return Err("load configuration is outside the file-backed sections".into());
+    if entry.virtual_address == 0 || entry.size == 0 {
+        return Err("invalid load configuration address or size".into());
     }
-    let config = LoadConfigData::parse(
-        bytes,
-        entry,
-        sections,
-        optional.windows_fields.file_alignment,
-        true,
-    )
-    .map_err(|error| error.to_string())?
-    .directory;
+    let file_offset = sections
+        .iter()
+        .find_map(|section| {
+            let offset = entry.virtual_address.checked_sub(section.virtual_address)?;
+            let end = offset.checked_add(entry.size)?;
+            (end <= section.size_of_raw_data)
+                .then(|| u64::from(section.pointer_to_raw_data) + u64::from(offset))
+        })
+        .ok_or("load configuration is outside the file-backed sections")?;
+    let bytes = reader
+        .read_at(file_offset, u64::from(entry.size))
+        .map_err(|error| error.to_string())?;
+
+    // The extracted directory starts at byte zero, so Goblin can parse it directly.
+    let mut entry = entry;
+    entry.virtual_address = 0;
+    let mut options = ParseOptions::default();
+    options.resolve_rva = false;
+    let config = LoadConfigData::parse_with_opts(&bytes, entry, &[], 0, &options, true)
+        .map_err(|error| error.to_string())?
+        .directory;
     if !(4..=entry.size).contains(&config.size) {
         return Err("invalid load configuration size".into());
     }
@@ -190,13 +262,11 @@ fn hybrid_marker(
     if config.size >= RELOCATION_SECTION_END {
         let section = config.dynamic_value_reloc_table_section.unwrap_or(0);
         if let Some(section_index) = section.checked_sub(1) {
-            let offset = config.dynamic_value_reloc_table_offset.unwrap_or(0) as usize;
-            let present = sections
+            let section = sections
                 .get(usize::from(section_index))
-                .and_then(|section| section_data(bytes, section))
-                .and_then(|data| data.get(offset..))
-                .and_then(has_arm64x_relocation)
-                .ok_or("invalid dynamic relocation table")?;
+                .ok_or("invalid dynamic relocation table section")?;
+            let offset = u64::from(config.dynamic_value_reloc_table_offset.unwrap_or(0));
+            let present = read_relocations(reader, section, offset)?;
             return Ok(
                 present.then_some("PE load configuration points to an ARM64X dynamic relocation")
             );
@@ -208,10 +278,28 @@ fn hybrid_marker(
     Ok(None)
 }
 
-fn section_data<'a>(bytes: &'a [u8], section: &SectionTable) -> Option<&'a [u8]> {
-    let start = section.pointer_to_raw_data as usize;
-    let end = start.checked_add(section.size_of_raw_data as usize)?;
-    bytes.get(start..end)
+fn read_relocations(
+    reader: &mut PeReader<'_, impl Read + Seek>,
+    section: &SectionTable,
+    relative_offset: u64,
+) -> Result<bool, String> {
+    let available = u64::from(section.size_of_raw_data)
+        .checked_sub(relative_offset)
+        .filter(|size| *size >= 8)
+        .ok_or("invalid dynamic relocation table offset")?;
+    let offset = u64::from(section.pointer_to_raw_data) + relative_offset;
+    let header = reader
+        .read_at(offset, 8)
+        .map_err(|error| error.to_string())?;
+    let table_size =
+        8 + u64::from(read_u32(&header, 4).ok_or("invalid dynamic relocation table size")?);
+    if table_size > available {
+        return Err("dynamic relocation table extends past its section".into());
+    }
+    let table = reader
+        .read_at(offset, table_size)
+        .map_err(|error| error.to_string())?;
+    has_arm64x_relocation(&table).ok_or_else(|| "invalid dynamic relocation table".into())
 }
 
 fn has_arm64x_relocation(table: &[u8]) -> Option<bool> {
