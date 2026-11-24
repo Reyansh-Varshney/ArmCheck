@@ -5,7 +5,9 @@ use armcheck_core::{
     model::{Evidence, FileArchitecture},
 };
 
-const USAGE: &str = "Usage: armcheck-cli check <path-to-exe>";
+mod scan;
+
+const USAGE: &str = "Usage: armcheck-cli check <path-to-exe>\n       armcheck-cli scan [--json]";
 
 fn main() -> ExitCode {
     let mut args = env::args_os().skip(1);
@@ -17,6 +19,8 @@ fn main() -> ExitCode {
         args.next(),
     ) {
         (Some("check"), Some(path), None) => check(Path::new(&path)),
+        (Some("scan"), None, None) => scan::run(false),
+        (Some("scan"), Some(flag), None) if flag == "--json" => scan::run(true),
         (Some("-h" | "--help"), None, None) => {
             println!("{USAGE}");
             ExitCode::SUCCESS
@@ -48,6 +52,17 @@ fn check(path: &Path) -> ExitCode {
         match evidence {
             Evidence::PeHeader { machine } => println!("PE header machine = 0x{machine:04X}"),
             Evidence::Explanation { message } => println!("{message}"),
+            Evidence::ProcessMachineType {
+                machine,
+                machine_attributes,
+            } => {
+                println!(
+                    "Process machine = 0x{machine:04X}, attributes = 0x{machine_attributes:08X}"
+                );
+            }
+            Evidence::Win32Error { operation, code } => {
+                println!("{operation} failed (Win32 error {code})")
+            }
             Evidence::IsWow64Process2 {
                 process_machine,
                 native_machine,

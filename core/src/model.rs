@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FileArchitecture {
     Arm64,
     X64,
@@ -9,13 +12,14 @@ pub enum FileArchitecture {
 }
 
 /// A file's architecture result and the PE observations behind it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FileCheck {
     pub architecture: FileArchitecture,
     pub evidence: Vec<Evidence>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProcessArchitecture {
     NativeArm64,
     EmulatedX64,
@@ -23,7 +27,8 @@ pub enum ProcessArchitecture {
     CouldNotVerify,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Evidence {
     PeHeader {
         machine: u16,
@@ -32,21 +37,31 @@ pub enum Evidence {
         process_machine: u16,
         native_machine: u16,
     },
+    ProcessMachineType {
+        machine: u16,
+        machine_attributes: u32,
+    },
+    Win32Error {
+        operation: String,
+        code: u32,
+    },
     Explanation {
         message: String,
     },
 }
 
 /// A running process's architecture and the observations behind it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ProcessClassification {
     pub architecture: ProcessArchitecture,
     pub evidence: Vec<Evidence>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Process {
     pub pid: u32,
+    pub name: String,
+    pub creation_time_100ns: Option<u64>,
     pub image_path: Option<PathBuf>,
     pub classification: ProcessClassification,
     // Percent of total CPU capacity over the sample window.
@@ -54,7 +69,8 @@ pub struct Process {
     pub working_set_bytes: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AppArchitecture {
     NativeArm64,
     Emulated,
@@ -62,11 +78,25 @@ pub enum AppArchitecture {
     CouldNotVerify,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GroupingEvidence {
+    ExecutablePath {
+        path: PathBuf,
+    },
+    ProductVersion {
+        directory: PathBuf,
+        product: String,
+        company: String,
+    },
+}
+
 /// A running app row. Its child processes carry the architecture evidence.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct App {
     pub name: String,
     pub architecture: AppArchitecture,
+    pub grouping: Option<GroupingEvidence>,
     pub processes: Vec<Process>,
     // None means the row has no complete measurement for this metric.
     pub cpu_percent: Option<f64>,

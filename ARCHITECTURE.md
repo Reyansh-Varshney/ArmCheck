@@ -1,21 +1,33 @@
 # ArmCheck architecture
 
-`armcheck-core` owns the data model and file inspection. It will also handle process scanning. `armcheck-cli` depends on it and handles terminal input and output. The Tauri app will also call the core library when it joins the workspace in Milestone 3. Both current crates build for `aarch64-pc-windows-msvc` by default.
+`armcheck-core` owns the data model, file inspection, and Windows process scanning. `armcheck-cli` provides terminal input and output. The Tauri app will also call the core library when it joins the workspace in Milestone 3. Both current crates build for `aarch64-pc-windows-msvc` by default.
 
 ## File and process results
 
-`FileCheck` describes the machine type declared by an executable's PE header. `ProcessClassification` describes how a running process is executing. Both carry `Evidence` with the observations used to produce the result. Installed copies and available native releases will have separate records when those features are added.
+`FileCheck` reports findings about an executable on disk. The PE reader seeks to the required header and metadata ranges and reads at most 1 MiB per file. ARM64EC and ARM64X machine codes and hybrid markers yield **Couldn't verify**. The evidence preserves the raw machine code and the marker. Revisit fuller handling for these formats after V1.
 
-When a conclusive `IsWow64Process2` result and a readable PE header identify different architectures, the process is **Couldn't verify**. Keep the raw values from both sources and explain the disagreement. If the header is unavailable, a conclusive runtime result can support a label with evidence that the header check was unavailable. If the runtime query is inconclusive or fails, a file header by itself does not establish how the process is running.
+Run `cargo run -p armcheck-cli -- check "<path-to-exe>"` for a file check. Invalid inputs, such as a missing file or a truncated PE header, produce an error and exit with code 1.
 
-The file checker reports **Couldn't verify** for ARM64EC and ARM64X machine codes and for hybrid markers in the PE load configuration. Some linked hybrid images carry an ordinary ARM64 or x64 machine code, so the result includes both the raw code and the hybrid evidence. Revisit fuller handling for these formats after V1.
+`ProcessClassification` describes a running process. ArmCheck opens each enumerated PID with `PROCESS_QUERY_LIMITED_INFORMATION`. If that fails, it retains the process, records the Win32 error, and reports **Couldn't verify**.
 
-Run the file check with `cargo run -p armcheck-cli -- check "<path-to-exe>"`. A readable file with uncertain architecture returns an evidence trail. Invalid inputs, such as a missing file or truncated PE header, produce an error and exit with code 1.
+On the ARM64 laptop the controlled process probes produced these values. Both APIs succeeded for all three processes.
 
-Before implementing the runtime rules, verify the API's actual output on the ARM64 laptop for native ARM64 and emulated x64 and x86 processes.
+| Executable verified by Dumpbin | IsWow64Process2 process machine | IsWow64Process2 native machine | ProcessMachineTypeInfo machine |
+| --- | --- | --- | --- |
+| ARM64 | `0x0000` | `0xAA64` | `0xAA64` |
+| x64 | `0x0000` | `0xAA64` | `0x8664` |
+| x86 | `0x014C` | `0xAA64` | `0x014C` |
+
+`IsWow64Process2` alone leaves ARM64 and x64 ambiguous on this machine. ArmCheck retains both queries' raw results and uses `GetProcessInformation(ProcessMachineTypeInfo)` to resolve that ambiguity. A readable, conclusive PE header should agree with the runtime result. A disagreement or hybrid marker produces **Couldn't verify**. If the file is unavailable, a conclusive runtime result can support a label with evidence about the unavailable file. Each image path is checked once per scan. Installed copies and available native releases will have separate records when those features are added.
 
 ## Running app rows
 
-An `App` groups related running `Process` records and keeps their evidence available. A group is **Mixed** as soon as it contains a verified native process and a verified emulated process. A group is **Native** or **Emulated** if all child processes are verified and agree at that level. A group whose verified processes are all emulated can include both x64 and x86 processes. Other groups are **Couldn't verify**.
+Run `cargo run -p armcheck-cli -- scan` for the table or add `--json` for process measurements, architecture evidence, and the basis for grouping.
 
-CPU represents a percentage of total CPU capacity over the sampling window. RAM is working set in bytes. An app-level metric is unavailable when its child measurements are incomplete.
+An `App` groups processes that share an exact executable path. Different executable paths may share a row when their version resources give the same product and company and the files share an install directory outside the Windows system directory. Processes without a reliable match get their own rows. A group with verified native and verified emulated children is **Mixed**. **Native** and **Emulated** require all children to be verified and agree at that level. Other groups are **Couldn't verify**.
+
+## CPU and working set
+
+Each CLI scan takes two snapshots with a 300 ms pause. CPU is `100 × Δ(kernel time + user time) ÷ (elapsed time × active logical processors)`. The numerator and denominator use seconds. Elapsed time is measured between the two timing reads for each process. RAM is the working set read during the second snapshot.
+
+A sample pair must match on PID and process creation time. A process that starts or exits during the window remains visible with both CPU and RAM unavailable. A group displays a total for a metric when all its child measurements for that metric are available.
