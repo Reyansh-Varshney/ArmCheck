@@ -2,3 +2,7 @@
 name = "armcheck-core"
 version.workspace = true
 edition.workspace = true
+
+[dependencies]
+goblin = { version = "0.10.7", default-features = false, features = ["std", "pe32", "pe64"] }
+thiserror = "2"

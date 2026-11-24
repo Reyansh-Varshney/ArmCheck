@@ -8,7 +8,7 @@ pub enum FileArchitecture {
     CouldNotVerify,
 }
 
-/// The architecture declared by an executable's file header.
+/// A file's architecture result and the PE observations behind it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileCheck {
     pub architecture: FileArchitecture,
