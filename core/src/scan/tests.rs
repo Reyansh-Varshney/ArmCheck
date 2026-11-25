@@ -38,6 +38,7 @@ fn classifies_the_three_measured_runtime_combinations() {
 fn a_file_header_alone_does_not_resolve_the_ambiguous_runtime_query() {
     let file = Ok(FileCheck {
         architecture: FileArchitecture::X64,
+        hybrid: false,
         evidence: vec![Evidence::PeHeader {
             machine: COFF_MACHINE_X86_64,
         }],
@@ -45,18 +46,32 @@ fn a_file_header_alone_does_not_resolve_the_ambiguous_runtime_query() {
     let result = classify(vec![wow(0)], Some(&file));
     assert_eq!(result.architecture, ProcessArchitecture::CouldNotVerify);
     assert_eq!(result.evidence.len(), 3);
+    assert_eq!(
+        result.verification_issue,
+        Some(VerificationIssue::RuntimeUnverified)
+    );
+    assert_eq!(result.image_file_architecture, Some(FileArchitecture::X64));
 }
 
 #[test]
 fn keeps_raw_evidence_when_a_runtime_and_file_result_disagree() {
     let file = Ok(FileCheck {
         architecture: FileArchitecture::Arm64,
+        hybrid: false,
         evidence: vec![Evidence::PeHeader {
             machine: COFF_MACHINE_ARM64,
         }],
     });
     let result = classify(vec![wow(0), machine(COFF_MACHINE_X86_64)], Some(&file));
     assert_eq!(result.architecture, ProcessArchitecture::CouldNotVerify);
+    assert_eq!(
+        result.verification_issue,
+        Some(VerificationIssue::ConflictingEvidence)
+    );
+    assert_eq!(
+        result.image_file_architecture,
+        Some(FileArchitecture::Arm64)
+    );
     assert!(result.evidence.contains(&Evidence::PeHeader {
         machine: COFF_MACHINE_ARM64
     }));
@@ -70,9 +85,14 @@ fn rejects_conflicting_runtime_types_and_verified_hybrid_markers() {
         None,
     );
     assert_eq!(conflict.architecture, ProcessArchitecture::CouldNotVerify);
+    assert_eq!(
+        conflict.verification_issue,
+        Some(VerificationIssue::ConflictingEvidence)
+    );
 
     let hybrid = Ok(FileCheck {
         architecture: FileArchitecture::CouldNotVerify,
+        hybrid: true,
         evidence: vec![
             Evidence::PeHeader {
                 machine: COFF_MACHINE_ARM64,
@@ -83,6 +103,11 @@ fn rejects_conflicting_runtime_types_and_verified_hybrid_markers() {
     let result = classify(vec![wow(0), machine(COFF_MACHINE_ARM64)], Some(&hybrid));
     assert_eq!(result.architecture, ProcessArchitecture::CouldNotVerify);
     assert!(result.evidence.contains(&explanation("Hybrid marker")));
+    assert_eq!(
+        result.verification_issue,
+        Some(VerificationIssue::HybridExecutable)
+    );
+    assert_eq!(result.image_file_architecture, None);
 }
 
 #[test]
@@ -215,6 +240,8 @@ fn process(pid: u32, path: Option<&str>, architecture: ProcessArchitecture) -> P
         working_set_bytes: Some(64),
         classification: ProcessClassification {
             architecture,
+            verification_issue: None,
+            image_file_architecture: None,
             evidence: vec![],
         },
     }

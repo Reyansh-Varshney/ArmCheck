@@ -1,5 +1,9 @@
 export type ProcessArchitecture = "native_arm64" | "emulated_x64" | "emulated_x86" | "could_not_verify";
 export type AppArchitecture = "native_arm64" | "emulated" | "mixed" | "could_not_verify";
+export type FileArchitecture = "arm64" | "x64" | "x86";
+export type VerificationIssue =
+  | "access_denied" | "process_unavailable" | "hybrid_executable"
+  | "conflicting_evidence" | "file_unverified" | "runtime_unverified";
 export type Evidence =
   | { kind: "pe_header"; machine: number }
   | { kind: "is_wow64_process2"; process_machine: number; native_machine: number }
@@ -11,13 +15,24 @@ export interface Process {
   pid: number;
   name: string;
   image_path: string | null;
-  classification: { architecture: ProcessArchitecture; evidence: Evidence[] };
+  classification: {
+    architecture: ProcessArchitecture;
+    verification_issue: VerificationIssue | null;
+    image_file_architecture: FileArchitecture | null;
+    evidence: Evidence[];
+  };
   cpu_percent: number | null;
   working_set_bytes: number | null;
 }
 
+export interface DesktopScan {
+  apps: RunningApp[];
+  desktop_scope_available: boolean;
+}
+
 export interface RunningApp {
   name: string;
+  desktop_app: boolean;
   architecture: AppArchitecture;
   grouping: { kind: "executable_path"; path: string }
     | { kind: "product_version"; directory: string; product: string; company: string }
@@ -57,13 +72,14 @@ export function appKey(app: RunningApp): string {
   return JSON.stringify([app.name, app.processes[0]?.pid]);
 }
 
-export function summary(apps: RunningApp[]): string {
+export function summary(apps: RunningApp[], desktopScope: boolean): string {
   const emulated = apps.filter((app) => app.architecture === "mixed" || app.architecture === "emulated").length;
   const unknown = apps.filter((app) => app.architecture === "could_not_verify").length;
-  if (emulated === 1) return "1 running app uses emulation";
-  if (emulated > 1) return `${emulated} running apps use emulation`;
-  if (apps.length === 0) return "No running apps found";
-  return unknown === 0 ? "All your running apps are native" : "No emulated apps verified";
+  const subject = desktopScope ? "desktop" : "running";
+  if (emulated === 1) return `1 ${subject} app uses emulation`;
+  if (emulated > 1) return `${emulated} ${subject} apps use emulation`;
+  if (apps.length === 0) return `No ${subject} apps found`;
+  return unknown === 0 ? `All ${subject} apps are native` : "No emulated apps verified";
 }
 
 const hex = (code: number, digits = 4) => `0x${code.toString(16).toUpperCase().padStart(digits, "0")}`;
@@ -78,19 +94,39 @@ export function evidenceText(evidence: Evidence): string {
   }
 }
 
-export function unverifiedReasons(app: RunningApp): string[] {
+export const issueLabels: Record<VerificationIssue, string> = {
+  access_denied: "Access denied",
+  process_unavailable: "Process unavailable",
+  hybrid_executable: "Hybrid executable",
+  conflicting_evidence: "Conflicting evidence",
+  file_unverified: "File couldn’t be verified",
+  runtime_unverified: "Runtime couldn’t be verified",
+};
+
+export const issueDescriptions: Record<VerificationIssue, string> = {
+  access_denied: "Windows denied access to the process.",
+  process_unavailable: "Windows couldn’t open the process.",
+  hybrid_executable: "ArmCheck found ARM64EC or ARM64X hybrid evidence.",
+  conflicting_evidence: "The architecture checks disagreed.",
+  file_unverified: "ArmCheck couldn’t verify the executable file.",
+  runtime_unverified: "Windows didn’t provide enough runtime information.",
+};
+
+export const fileArchitectureLabels = { arm64: "ARM64", x64: "x64", x86: "x86" };
+
+export function verificationIssues(app: RunningApp): VerificationIssue[] {
   if (app.architecture !== "could_not_verify") return [];
-  return [...new Set(app.processes.filter((process) => process.classification.architecture === "could_not_verify").map((process) => {
-    const evidence = process.classification.evidence;
-    const openError = evidence.find((item) => item.kind === "win32_error" && item.operation.startsWith("OpenProcess"));
-    const explanations = evidence.flatMap((item) => item.kind === "explanation" ? [item.message] : []);
-    if (openError?.kind === "win32_error") {
-      return openError.code === 5 ? "Windows denied access." : "Windows couldn’t open this process.";
-    }
-    if (explanations.some((message) => /ARM64EC|ARM64X/.test(message))) return "This executable uses a hybrid ARM format.";
-    if (explanations.some((message) => message.includes("disagrees with the executable"))) return "Windows and the file reported different architectures.";
-    if (explanations.some((message) => message.includes("runtime architecture queries disagree"))) return "Windows returned conflicting architecture information.";
-    if (explanations.some((message) => /PE|machine code/.test(message))) return "The executable’s architecture couldn’t be read reliably.";
-    return "Windows didn’t return enough architecture information.";
-  }))];
+  const issues = new Set<VerificationIssue>();
+  for (const { classification } of app.processes) {
+    if (classification.verification_issue !== null) issues.add(classification.verification_issue);
+  }
+  return [...issues];
+}
+
+export function verificationCounts(apps: RunningApp[]): Map<VerificationIssue, number> {
+  const counts = new Map<VerificationIssue, number>();
+  for (const app of apps) {
+    for (const issue of verificationIssues(app)) counts.set(issue, (counts.get(issue) ?? 0) + 1);
+  }
+  return counts;
 }

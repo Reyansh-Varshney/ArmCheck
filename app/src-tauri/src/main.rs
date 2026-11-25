@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod desktop_windows;
 mod icons;
 
 use std::{collections::HashMap, path::PathBuf, sync::Mutex};
@@ -26,6 +27,13 @@ struct AppRow {
     #[serde(flatten)]
     app: App,
     icon: Option<String>,
+    desktop_app: bool,
+}
+
+#[derive(Serialize)]
+struct DesktopScan {
+    apps: Vec<AppRow>,
+    desktop_scope_available: bool,
 }
 
 #[derive(Serialize)]
@@ -39,7 +47,7 @@ fn can_scan(window: &WebviewWindow) -> bool {
 }
 
 #[tauri::command]
-async fn scan_apps(window: WebviewWindow) -> Result<Option<Vec<AppRow>>, String> {
+async fn scan_apps(window: WebviewWindow) -> Result<Option<DesktopScan>, String> {
     async_runtime::spawn_blocking(move || {
         let desktop = window.state::<Desktop>();
         // Keep the lock through sampling and icon lookup so requests cannot overlap.
@@ -54,6 +62,7 @@ async fn scan_apps(window: WebviewWindow) -> Result<Option<Vec<AppRow>>, String>
         if cache.len() > 512 {
             cache.clear();
         }
+        let desktop_pids = desktop_windows::process_ids().ok();
         let rows = apps
             .into_iter()
             .map(|app| {
@@ -68,10 +77,22 @@ async fn scan_apps(window: WebviewWindow) -> Result<Option<Vec<AppRow>>, String>
                         .find_map(|path| cached_icon(&mut cache, path)),
                     None => None,
                 };
-                AppRow { app, icon }
+                let desktop_app = desktop_pids.as_ref().is_some_and(|pids| {
+                    app.processes
+                        .iter()
+                        .any(|process| pids.contains(&process.pid))
+                });
+                AppRow {
+                    app,
+                    icon,
+                    desktop_app,
+                }
             })
             .collect();
-        Ok(Some(rows))
+        Ok(can_scan(&window).then_some(DesktopScan {
+            apps: rows,
+            desktop_scope_available: desktop_pids.is_some(),
+        }))
     })
     .await
     .map_err(|error| error.to_string())?

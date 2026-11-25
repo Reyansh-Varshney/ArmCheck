@@ -64,6 +64,7 @@ fn classifies_arm64_x64_and_x86_from_their_pe_headers() {
             result,
             FileCheck {
                 architecture,
+                hybrid: false,
                 evidence: vec![Evidence::PeHeader { machine }],
             }
         );
@@ -79,6 +80,10 @@ fn reports_explicit_hybrid_and_unknown_machine_codes() {
     ] {
         let result = check_pe(&image(machine, true)).expect("fixture should have a readable image");
         assert_eq!(result.architecture, FileArchitecture::CouldNotVerify);
+        assert_eq!(
+            result.hybrid,
+            matches!(machine, MACHINE_ARM64EC | MACHINE_ARM64X)
+        );
         assert_eq!(
             result.evidence,
             vec![

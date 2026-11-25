@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FileArchitecture {
     Arm64,
@@ -15,6 +15,8 @@ pub enum FileArchitecture {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FileCheck {
     pub architecture: FileArchitecture,
+    #[serde(skip)]
+    pub(crate) hybrid: bool,
     pub evidence: Vec<Evidence>,
 }
 
@@ -50,10 +52,23 @@ pub enum Evidence {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationIssue {
+    AccessDenied,
+    ProcessUnavailable,
+    HybridExecutable,
+    ConflictingEvidence,
+    FileUnverified,
+    RuntimeUnverified,
+}
+
 /// A running process's architecture and the observations behind it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ProcessClassification {
     pub architecture: ProcessArchitecture,
+    pub verification_issue: Option<VerificationIssue>,
+    pub image_file_architecture: Option<FileArchitecture>,
     pub evidence: Vec<Evidence>,
 }
 

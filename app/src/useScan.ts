@@ -2,12 +2,12 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useState } from "react";
-import type { RunningApp } from "./model";
+import type { DesktopScan } from "./model";
 
 const REFRESH_MS = 3000;
 
 export function useScan() {
-  const [apps, setApps] = useState<RunningApp[] | null>(null);
+  const [scan, setScan] = useState<DesktopScan | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -26,9 +26,9 @@ export function useScan() {
       inFlight = true;
       const revision = generation;
       try {
-        const rows = await invoke<RunningApp[] | null>("scan_apps");
-        if (active && !disposed && revision === generation && rows !== null) {
-          setApps(rows);
+        const snapshot = await invoke<DesktopScan | null>("scan_apps");
+        if (active && !disposed && revision === generation && snapshot !== null) {
+          setScan(snapshot);
           setError(null);
         }
       } catch (cause) {
@@ -60,7 +60,10 @@ export function useScan() {
     function subscribe(subscription: Promise<() => void>) {
       void subscription.then((stop) => {
         if (disposed) stop();
-        else unlisteners.push(stop);
+        else {
+          unlisteners.push(stop);
+          void syncVisibility();
+        }
       }).catch((cause) => {
         if (!disposed) setError(String(cause));
       });
@@ -77,5 +80,5 @@ export function useScan() {
     };
   }, []);
 
-  return { apps, error };
+  return { scan, error };
 }

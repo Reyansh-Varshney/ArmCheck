@@ -12,7 +12,7 @@ use crate::{
     file_check::{CheckFileError, check_file},
     model::{
         App, AppArchitecture, Evidence, FileArchitecture, FileCheck, GroupingEvidence, Process,
-        ProcessArchitecture, ProcessClassification,
+        ProcessArchitecture, ProcessClassification, VerificationIssue,
     },
 };
 
@@ -192,29 +192,34 @@ fn classify(
     mut evidence: Vec<Evidence>,
     image: Option<&Result<FileCheck, CheckFileError>>,
 ) -> ProcessClassification {
-    let mut architecture = match runtime_architecture(&evidence) {
-        Ok(architecture) => architecture,
-        Err(reason) => {
+    let (mut architecture, mut issue) = match runtime_architecture(&evidence) {
+        Ok(architecture) => (architecture, None),
+        Err((issue, reason)) => {
             evidence.push(explanation(reason));
-            ProcessArchitecture::CouldNotVerify
+            (ProcessArchitecture::CouldNotVerify, Some(issue))
         }
     };
+    let mut image_file_architecture = None;
     match image {
         Some(Ok(file)) => {
             evidence.extend(file.evidence.iter().cloned());
-            match file.architecture {
-                FileArchitecture::CouldNotVerify => {
-                    architecture = ProcessArchitecture::CouldNotVerify
+            if file.hybrid {
+                issue = Some(VerificationIssue::HybridExecutable);
+                architecture = ProcessArchitecture::CouldNotVerify;
+            } else if file.architecture == FileArchitecture::CouldNotVerify {
+                issue.get_or_insert(VerificationIssue::FileUnverified);
+                architecture = ProcessArchitecture::CouldNotVerify;
+            } else {
+                if issue != Some(VerificationIssue::HybridExecutable) {
+                    image_file_architecture = Some(file.architecture);
                 }
-                _ if architecture != ProcessArchitecture::CouldNotVerify
-                    && !disk_matches_runtime(&file.architecture, &architecture) =>
-                {
+                if issue.is_none() && !disk_matches_runtime(&file.architecture, &architecture) {
                     evidence.push(explanation(
                         "Runtime architecture disagrees with the executable's PE header",
                     ));
+                    issue = Some(VerificationIssue::ConflictingEvidence);
                     architecture = ProcessArchitecture::CouldNotVerify;
                 }
-                _ => {}
             }
         }
         Some(Err(
@@ -228,6 +233,7 @@ fn classify(
             evidence.push(explanation(format!(
                 "PE header could not be verified: {error}"
             )));
+            issue.get_or_insert(VerificationIssue::FileUnverified);
             architecture = ProcessArchitecture::CouldNotVerify;
         }
         None => {}
@@ -235,11 +241,19 @@ fn classify(
 
     ProcessClassification {
         architecture,
+        verification_issue: issue,
+        image_file_architecture,
         evidence,
     }
 }
 
-fn runtime_architecture(evidence: &[Evidence]) -> Result<ProcessArchitecture, &'static str> {
+fn runtime_architecture(
+    evidence: &[Evidence],
+) -> Result<ProcessArchitecture, (VerificationIssue, &'static str)> {
+    use VerificationIssue::{
+        AccessDenied, ConflictingEvidence, HybridExecutable, ProcessUnavailable, RuntimeUnverified,
+    };
+
     let (process_machine, native_machine) = evidence
         .iter()
         .find_map(|item| match item {
@@ -249,9 +263,30 @@ fn runtime_architecture(evidence: &[Evidence]) -> Result<ProcessArchitecture, &'
             } => Some((*process_machine, *native_machine)),
             _ => None,
         })
-        .ok_or("IsWow64Process2 did not provide a runtime architecture")?;
+        .ok_or_else(|| {
+            match evidence.iter().find_map(|item| match item {
+                Evidence::Win32Error { operation, code }
+                    if operation.starts_with("OpenProcess") =>
+                {
+                    Some(*code)
+                }
+                _ => None,
+            }) {
+                Some(code) if code == ::windows::Win32::Foundation::ERROR_ACCESS_DENIED.0 => {
+                    (AccessDenied, "Windows denied access to the process")
+                }
+                Some(_) => (ProcessUnavailable, "Windows could not open the process"),
+                None => (
+                    RuntimeUnverified,
+                    "IsWow64Process2 did not provide a runtime architecture",
+                ),
+            }
+        })?;
     if native_machine != COFF_MACHINE_ARM64 {
-        return Err("IsWow64Process2 did not report an ARM64 host");
+        return Err((
+            RuntimeUnverified,
+            "IsWow64Process2 did not report an ARM64 host",
+        ));
     }
     let machine_type = evidence.iter().find_map(|item| match item {
         Evidence::ProcessMachineType { machine, .. } => Some(*machine),
@@ -265,15 +300,26 @@ fn runtime_architecture(evidence: &[Evidence]) -> Result<ProcessArchitecture, &'
         (0, Some(COFF_MACHINE_X86_64)) => Ok(ProcessArchitecture::EmulatedX64),
         (COFF_MACHINE_X86, None | Some(COFF_MACHINE_X86)) => Ok(ProcessArchitecture::EmulatedX86),
         (COFF_MACHINE_X86_64, Some(COFF_MACHINE_X86_64)) => Ok(ProcessArchitecture::EmulatedX64),
-        (0xA641 | 0xA64E, _) | (_, Some(0xA641 | 0xA64E)) => {
-            Err("The runtime query reported ARM64EC or ARM64X")
-        }
-        (0, None) => Err("IsWow64Process2 could not distinguish ARM64 from x64"),
-        (0, Some(_)) => Err("The runtime queries gave an unverified machine type"),
-        (_, Some(other)) if other != process_machine => {
-            Err("The two runtime architecture queries disagree")
-        }
-        _ => Err("The runtime queries did not verify a supported architecture"),
+        (0xA641 | 0xA64E, _) | (_, Some(0xA641 | 0xA64E)) => Err((
+            HybridExecutable,
+            "The runtime query reported ARM64EC or ARM64X",
+        )),
+        (0, None) => Err((
+            RuntimeUnverified,
+            "IsWow64Process2 could not distinguish ARM64 from x64",
+        )),
+        (0, Some(_)) => Err((
+            RuntimeUnverified,
+            "The runtime queries gave an unverified machine type",
+        )),
+        (_, Some(other)) if other != process_machine => Err((
+            ConflictingEvidence,
+            "The two runtime architecture queries disagree",
+        )),
+        _ => Err((
+            RuntimeUnverified,
+            "The runtime queries did not verify a supported architecture",
+        )),
     }
 }
 

@@ -193,13 +193,19 @@ fn inspect_pe(reader: &mut PeReader<'_, impl Read + Seek>) -> Result<FileCheck, 
         ),
     };
 
-    let explanation = match explanation {
-        Some(message) => Some(message.to_owned()),
+    let (explanation, hybrid) = match explanation {
+        Some(message) => (
+            Some(message.to_owned()),
+            matches!(machine, MACHINE_ARM64EC | MACHINE_ARM64X),
+        ),
         None if is_64 => match hybrid_marker(reader, &optional, &sections) {
-            Ok(marker) => marker.map(str::to_owned),
-            Err(error) => Some(format!("Could not verify PE hybrid metadata: {error}")),
+            Ok(marker) => (marker.map(str::to_owned), marker.is_some()),
+            Err(error) => (
+                Some(format!("Could not verify PE hybrid metadata: {error}")),
+                false,
+            ),
         },
-        None => None,
+        None => (None, false),
     };
     let architecture = match explanation {
         Some(message) => {
@@ -210,6 +216,7 @@ fn inspect_pe(reader: &mut PeReader<'_, impl Read + Seek>) -> Result<FileCheck, 
     };
     Ok(FileCheck {
         architecture,
+        hybrid,
         evidence,
     })
 }
