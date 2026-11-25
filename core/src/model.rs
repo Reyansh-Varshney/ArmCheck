@@ -8,6 +8,7 @@ pub enum FileArchitecture {
     Arm64,
     X64,
     X86,
+    ManagedAnyCpu,
     CouldNotVerify,
 }
 

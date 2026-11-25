@@ -1,6 +1,6 @@
 export type ProcessArchitecture = "native_arm64" | "emulated_x64" | "emulated_x86" | "could_not_verify";
 export type AppArchitecture = "native_arm64" | "emulated" | "mixed" | "could_not_verify";
-export type FileArchitecture = "arm64" | "x64" | "x86";
+export type FileArchitecture = "arm64" | "x64" | "x86" | "managed_any_cpu";
 export type VerificationIssue =
   | "access_denied" | "process_unavailable" | "hybrid_executable"
   | "conflicting_evidence" | "file_unverified" | "runtime_unverified";
@@ -45,7 +45,7 @@ export interface RunningApp {
 
 export interface CheckedFile {
   name: string;
-  finding: { Ok: { architecture: "arm64" | "x64" | "x86" | "could_not_verify"; evidence: Evidence[] } }
+  finding: { Ok: { architecture: FileArchitecture | "could_not_verify"; evidence: Evidence[] } }
     | { Err: string };
 }
 
@@ -112,7 +112,7 @@ export const issueDescriptions: Record<VerificationIssue, string> = {
   runtime_unverified: "Windows didn’t provide enough runtime information.",
 };
 
-export const fileArchitectureLabels = { arm64: "ARM64", x64: "x64", x86: "x86" };
+export const fileArchitectureLabels = { arm64: "ARM64", x64: "x64", x86: "x86", managed_any_cpu: "AnyCPU (.NET)" };
 
 export function verificationIssues(app: RunningApp): VerificationIssue[] {
   if (app.architecture !== "could_not_verify") return [];

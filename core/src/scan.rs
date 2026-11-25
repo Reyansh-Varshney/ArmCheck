@@ -213,7 +213,10 @@ fn classify(
                 if issue != Some(VerificationIssue::HybridExecutable) {
                     image_file_architecture = Some(file.architecture);
                 }
-                if issue.is_none() && !disk_matches_runtime(&file.architecture, &architecture) {
+                if issue.is_none()
+                    && file.architecture != FileArchitecture::ManagedAnyCpu
+                    && !disk_matches_runtime(&file.architecture, &architecture)
+                {
                     evidence.push(explanation(
                         "Runtime architecture disagrees with the executable's PE header",
                     ));

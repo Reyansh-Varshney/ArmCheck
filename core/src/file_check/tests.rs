@@ -216,6 +216,98 @@ fn reports_missing_files_and_directories() {
     assert!(matches!(check_file(folder), Err(CheckFileError::NotFile { path }) if path == folder));
 }
 
+fn clr_image(flags: u32) -> Vec<u8> {
+    let mut bytes = image(COFF_MACHINE_X86, false);
+    let directory = OPTIONAL_START + 96 + 14 * 8;
+    let metadata = SECTION_RVA + 0x80;
+    put_u32(&mut bytes, directory, SECTION_RVA);
+    put_u32(&mut bytes, directory + 4, size_of::<Cor20Header>() as u32);
+    put_u32(
+        &mut bytes,
+        RAW_START + offset_of!(Cor20Header, cb),
+        size_of::<Cor20Header>() as u32,
+    );
+    put_u32(
+        &mut bytes,
+        RAW_START + offset_of!(Cor20Header, metadata),
+        metadata,
+    );
+    put_u32(
+        &mut bytes,
+        RAW_START + offset_of!(Cor20Header, metadata) + 4,
+        16,
+    );
+    put_u32(
+        &mut bytes,
+        RAW_START + offset_of!(Cor20Header, flags),
+        flags,
+    );
+    put_u32(&mut bytes, RAW_START + 0x80, DOTNET_SIGNATURE);
+    bytes
+}
+
+#[test]
+fn recognizes_il_only_anycpu_in_a_pe32_i386_file() {
+    let check = check_pe(&clr_image(COMIMAGE_FLAGS_ILONLY)).unwrap();
+    assert_eq!(check.architecture, FileArchitecture::ManagedAnyCpu);
+    assert!(!check.hybrid);
+    assert!(
+        matches!(check.evidence[1], Evidence::Explanation { ref message } if message.contains("AnyCPU"))
+    );
+}
+
+#[test]
+fn only_accepts_machine_neutral_clr_flags_as_anycpu() {
+    for flags in [
+        COMIMAGE_FLAGS_ILONLY | COMIMAGE_FLAGS_32BITREQUIRED,
+        COMIMAGE_FLAGS_ILONLY | COMIMAGE_FLAGS_NATIVE_ENTRYPOINT,
+        0,
+    ] {
+        assert_eq!(
+            check_pe(&clr_image(flags)).unwrap().architecture,
+            FileArchitecture::X86
+        );
+    }
+    for flags in [
+        COMIMAGE_FLAGS_ILONLY | COMIMAGE_FLAGS_32BITPREFERRED,
+        COMIMAGE_FLAGS_ILONLY | COMIMAGE_FLAGS_32BITREQUIRED | COMIMAGE_FLAGS_32BITPREFERRED,
+    ] {
+        assert_eq!(
+            check_pe(&clr_image(flags)).unwrap().architecture,
+            FileArchitecture::CouldNotVerify
+        );
+    }
+}
+
+#[test]
+fn leaves_malformed_or_precompiled_clr_data_unverified() {
+    let mut bad_metadata = clr_image(COMIMAGE_FLAGS_ILONLY);
+    put_u32(&mut bad_metadata, RAW_START + 0x80, 0);
+    assert_eq!(
+        check_pe(&bad_metadata).unwrap().architecture,
+        FileArchitecture::CouldNotVerify
+    );
+
+    let mut native = clr_image(COMIMAGE_FLAGS_ILONLY);
+    put_u32(
+        &mut native,
+        RAW_START + offset_of!(Cor20Header, managed_native_header),
+        SECTION_RVA + 0x100,
+    );
+    assert_eq!(
+        check_pe(&native).unwrap().architecture,
+        FileArchitecture::CouldNotVerify
+    );
+
+    let mut truncated = clr_image(COMIMAGE_FLAGS_ILONLY);
+    let directory = OPTIONAL_START + 96 + 14 * 8;
+    put_u32(&mut truncated, directory + 4, 12);
+    assert_eq!(
+        check_pe(&truncated).unwrap().architecture,
+        FileArchitecture::CouldNotVerify
+    );
+}
+
 #[test]
 fn rejects_empty_input() {
     assert!(matches!(check_pe(&[]), Err(CheckFileError::NotPe)));

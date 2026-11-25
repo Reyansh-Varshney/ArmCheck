@@ -54,6 +54,31 @@ fn a_file_header_alone_does_not_resolve_the_ambiguous_runtime_query() {
 }
 
 #[test]
+fn anycpu_file_allows_verified_runtime_to_determine_the_label() {
+    let file = Ok(FileCheck {
+        architecture: FileArchitecture::ManagedAnyCpu,
+        hybrid: false,
+        evidence: vec![Evidence::PeHeader {
+            machine: COFF_MACHINE_X86,
+        }],
+    });
+    let verified = classify(vec![wow(0), machine(COFF_MACHINE_X86_64)], Some(&file));
+    assert_eq!(verified.architecture, ProcessArchitecture::EmulatedX64);
+    assert_eq!(verified.verification_issue, None);
+    assert_eq!(
+        verified.image_file_architecture,
+        Some(FileArchitecture::ManagedAnyCpu)
+    );
+
+    let unverified = classify(vec![wow(0)], Some(&file));
+    assert_eq!(unverified.architecture, ProcessArchitecture::CouldNotVerify);
+    assert_eq!(
+        unverified.verification_issue,
+        Some(VerificationIssue::RuntimeUnverified)
+    );
+}
+
+#[test]
 fn keeps_raw_evidence_when_a_runtime_and_file_result_disagree() {
     let file = Ok(FileCheck {
         architecture: FileArchitecture::Arm64,

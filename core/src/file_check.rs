@@ -1,10 +1,16 @@
 use std::{
     fs::{self, File},
     io::{self, Read, Seek, SeekFrom},
+    mem::{offset_of, size_of},
     path::{Path, PathBuf},
 };
 
 use goblin::pe::{
+    clr::{
+        COMIMAGE_FLAGS_32BITPREFERRED, COMIMAGE_FLAGS_32BITREQUIRED, COMIMAGE_FLAGS_ILONLY,
+        COMIMAGE_FLAGS_NATIVE_ENTRYPOINT, Cor20Header, DOTNET_SIGNATURE,
+    },
+    data_directories::DataDirectory,
     header::{
         COFF_MACHINE_ARM64, COFF_MACHINE_X86, COFF_MACHINE_X86_64, CoffHeader, DOS_STUB_OFFSET,
         Header, PE_POINTER_OFFSET, SIZEOF_COFF_HEADER, SIZEOF_PE_MAGIC,
@@ -207,17 +213,111 @@ fn inspect_pe(reader: &mut PeReader<'_, impl Read + Seek>) -> Result<FileCheck, 
         },
         None => (None, false),
     };
-    let architecture = match explanation {
+    let mut architecture = match explanation {
         Some(message) => {
             evidence.push(Evidence::Explanation { message });
             FileArchitecture::CouldNotVerify
         }
         None => architecture,
     };
+    if architecture == FileArchitecture::X86
+        && let Some(&directory) = optional.data_directories.get_clr_runtime_header()
+    {
+        match managed_any_cpu(reader, directory, &sections) {
+            Ok(Some(flags)) => {
+                architecture = FileArchitecture::ManagedAnyCpu;
+                evidence.push(Evidence::Explanation {
+                    message: format!(
+                        "CLR flags 0x{flags:08X} indicate architecture-neutral .NET IL (AnyCPU)"
+                    ),
+                });
+            }
+            Ok(None) => {}
+            Err(error) => {
+                architecture = FileArchitecture::CouldNotVerify;
+                evidence.push(Evidence::Explanation {
+                    message: format!("Could not verify CLR architecture: {error}"),
+                });
+            }
+        }
+    }
     Ok(FileCheck {
         architecture,
         hybrid,
         evidence,
+    })
+}
+
+fn managed_any_cpu(
+    reader: &mut PeReader<'_, impl Read + Seek>,
+    directory: DataDirectory,
+    sections: &[SectionTable],
+) -> Result<Option<u32>, String> {
+    const HEADER_SIZE: u64 = size_of::<Cor20Header>() as u64;
+    let offset = section_file_offset(directory, sections)
+        .filter(|_| u64::from(directory.size) >= HEADER_SIZE)
+        .ok_or("CLR header is outside the file-backed sections or is too small")?;
+    let header = reader
+        .read_at(offset, HEADER_SIZE)
+        .map_err(|error| error.to_string())?;
+    let header_size =
+        read_u32(&header, offset_of!(Cor20Header, cb)).ok_or("CLR header size is missing")?;
+    if u64::from(header_size) != HEADER_SIZE {
+        return Err("unexpected CLR header size".into());
+    }
+
+    let flags = read_u32(&header, offset_of!(Cor20Header, flags)).ok_or("CLR flags are missing")?;
+    let mut metadata_entry = offset_of!(Cor20Header, metadata);
+    let metadata =
+        DataDirectory::parse(&header, &mut metadata_entry).map_err(|error| error.to_string())?;
+    let metadata_offset = section_file_offset(metadata, sections)
+        .filter(|_| metadata.size >= 4)
+        .ok_or("CLR metadata is outside the file-backed sections or is too small")?;
+    let signature = reader
+        .read_at(metadata_offset, 4)
+        .map_err(|error| error.to_string())?;
+    if read_u32(&signature, 0) != Some(DOTNET_SIGNATURE) {
+        return Err("CLR metadata signature is invalid".into());
+    }
+
+    if flags & COMIMAGE_FLAGS_ILONLY == 0 || flags & COMIMAGE_FLAGS_NATIVE_ENTRYPOINT != 0 {
+        return Ok(None);
+    }
+    // A preference alone does not make an assembly x86-only, even when both
+    // bitness flags are present for backward compatibility.
+    if flags & COMIMAGE_FLAGS_32BITPREFERRED != 0 {
+        return Err("CLR flags prefer 32-bit execution".into());
+    }
+    if flags & COMIMAGE_FLAGS_32BITREQUIRED != 0 {
+        return Ok(None);
+    }
+
+    for mut directory_offset in [
+        offset_of!(Cor20Header, managed_native_header),
+        offset_of!(Cor20Header, vtable_fixups),
+        offset_of!(Cor20Header, export_address_table_jumps),
+    ] {
+        let native_data = DataDirectory::parse(&header, &mut directory_offset)
+            .map_err(|error| error.to_string())?;
+        if native_data != DataDirectory::default() {
+            return Err("CLR IL-only flags are accompanied by native metadata".into());
+        }
+    }
+
+    Ok(Some(flags))
+}
+
+fn section_file_offset(directory: DataDirectory, sections: &[SectionTable]) -> Option<u64> {
+    if directory.virtual_address == 0 || directory.size == 0 {
+        return None;
+    }
+    sections.iter().find_map(|section| {
+        let offset = directory
+            .virtual_address
+            .checked_sub(section.virtual_address)?;
+        let end = offset.checked_add(directory.size)?;
+        (end <= section.size_of_raw_data)
+            .then(|| u64::from(section.pointer_to_raw_data) + u64::from(offset))
     })
 }
 
@@ -232,14 +332,7 @@ fn hybrid_marker(
     if entry.virtual_address == 0 || entry.size == 0 {
         return Err("invalid load configuration address or size".into());
     }
-    let file_offset = sections
-        .iter()
-        .find_map(|section| {
-            let offset = entry.virtual_address.checked_sub(section.virtual_address)?;
-            let end = offset.checked_add(entry.size)?;
-            (end <= section.size_of_raw_data)
-                .then(|| u64::from(section.pointer_to_raw_data) + u64::from(offset))
-        })
+    let file_offset = section_file_offset(entry, sections)
         .ok_or("load configuration is outside the file-backed sections")?;
     let bytes = reader
         .read_at(file_offset, u64::from(entry.size))

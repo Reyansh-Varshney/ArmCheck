@@ -4,7 +4,7 @@ import { Download, File, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { evidenceText, type CheckedFile } from "./model";
 
-const labels = { arm64: "Native (ARM64)", x64: "x64", x86: "x86", could_not_verify: "Couldn’t verify" };
+const labels = { arm64: "Native (ARM64)", x64: "x64", x86: "x86", managed_any_cpu: "AnyCPU (.NET)", could_not_verify: "Couldn’t verify" };
 
 export function FileCheckPanel({ technical }: { technical: boolean }) {
   const [result, setResult] = useState<CheckedFile | null>(null);

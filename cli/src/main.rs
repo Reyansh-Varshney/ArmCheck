@@ -45,6 +45,7 @@ fn check(path: &Path) -> ExitCode {
         FileArchitecture::Arm64 => "Native (ARM64)",
         FileArchitecture::X64 => "x64",
         FileArchitecture::X86 => "x86",
+        FileArchitecture::ManagedAnyCpu => "AnyCPU (.NET)",
         FileArchitecture::CouldNotVerify => "Couldn't verify",
     };
     println!("{label}");

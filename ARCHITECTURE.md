@@ -16,7 +16,7 @@ Controlled process probes on Windows 11 ARM64 returned these values:
 | x64 | `0x0000` | `0xAA64` | `0x8664` |
 | x86 | `0x014C` | `0xAA64` | `0x014C` |
 
-`IsWow64Process2` alone can leave ARM64 and x64 ambiguous. ArmCheck retains the runtime results and uses `GetProcessInformation(ProcessMachineTypeInfo)` to resolve that ambiguity. A mismatch between conclusive observations or a hybrid marker produces **Couldn't verify**. If the file is unavailable, a conclusive runtime result can support a label with evidence about the unavailable file. Each image path is checked once per scan. A separately labeled file architecture provides a disk-only observation when the running architecture remains uncertain.
+`IsWow64Process2` alone can leave ARM64 and x64 ambiguous. ArmCheck retains the runtime results and uses `GetProcessInformation(ProcessMachineTypeInfo)` to resolve that ambiguity. A mismatch between conclusive observations or a hybrid marker produces **Couldn't verify**. If the file is unavailable, a conclusive runtime result can support a label with evidence about the unavailable file. A verified .NET AnyCPU executable is reported as architecture-neutral on disk. In this case, a conclusive Windows runtime result determines the running architecture. Each image path is checked once per scan. A separately labeled file architecture provides a disk-only observation when the running architecture remains uncertain.
 
 ## Running app rows and desktop scope
 
