@@ -1,0 +1,112 @@
+name: Windows ARM64
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arm64-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  ARMCHECK_TOOLCHAIN: 1.98.0-aarch64-pc-windows-msvc
+
+jobs:
+  verify:
+    name: Verify Windows ARM64
+    runs-on: windows-11-arm
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up native Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '24'
+          architecture: arm64
+          package-manager-cache: false
+
+      - name: Install native Rust toolchain
+        run: |
+          rustup toolchain install $env:ARMCHECK_TOOLCHAIN --profile minimal --component rustfmt --component clippy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "RUSTUP_TOOLCHAIN=$env:ARMCHECK_TOOLCHAIN" >> $env:GITHUB_ENV
+
+      - name: Install locked frontend dependencies
+        working-directory: app
+        run: npm ci --no-audit --no-fund
+
+      - name: Type-check and build the frontend
+        working-directory: app
+        run: npm run build
+
+      - name: Check Rust formatting
+        run: cargo fmt --all --check
+
+      - name: Run Rust tests
+        run: cargo test --locked --workspace
+
+      - name: Run Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Check version tag
+        if: github.ref_type == 'tag'
+        run: |
+          $config = Get-Content -Raw -LiteralPath 'app/src-tauri/tauri.conf.json' | ConvertFrom-Json
+          if ($env:GITHUB_REF_NAME -cne "v$($config.version)") {
+            throw 'The Git tag must match the Tauri app version.'
+          }
+
+      - name: Build the ARM64 app and installer
+        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
+        working-directory: app
+        run: npm run tauri -- build --ci --target aarch64-pc-windows-msvc -- --locked
+
+      - name: Verify the PE machine field and collect release assets
+        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
+        run: |
+          $release = Resolve-Path -LiteralPath 'target/aarch64-pc-windows-msvc/release'
+          $exe = Join-Path $release 'armcheck.exe'
+          $stream = [IO.File]::OpenRead($exe)
+          $reader = [IO.BinaryReader]::new($stream)
+          try {
+            if ($reader.ReadUInt16() -ne 0x5A4D) { throw 'Missing DOS header.' }
+            $stream.Position = 0x3C
+            $stream.Position = $reader.ReadUInt32()
+            if ($reader.ReadUInt32() -ne 0x00004550) { throw 'Missing PE signature.' }
+            if ($reader.ReadUInt16() -ne 0xAA64) { throw 'The app executable is not ARM64.' }
+          } finally {
+            $reader.Dispose()
+          }
+          $installers = @(Get-ChildItem -LiteralPath (Join-Path $release 'bundle/nsis') -File -Filter 'ArmCheck_*_arm64-setup.exe')
+          if ($installers.Count -ne 1) { throw 'Expected one ARM64 installer.' }
+          $out = New-Item -ItemType Directory -Path 'target/release-assets' -Force
+          Copy-Item -LiteralPath $exe, $installers[0].FullName -Destination $out.FullName
+
+          $checksums = Get-ChildItem -LiteralPath $out.FullName -File -Filter '*.exe' | Sort-Object Name | ForEach-Object {
+            $hash = Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256
+            "$($hash.Hash.ToLowerInvariant())  $($_.Name)"
+          }
+          $checksums | Set-Content -LiteralPath (Join-Path $out.FullName 'SHA256SUMS') -Encoding ascii
+
+      - name: Upload verified release assets
+        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ArmCheck-Windows-ARM64
+          path: target/release-assets/
+          if-no-files-found: error
+          retention-days: 14
