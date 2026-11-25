@@ -4,7 +4,7 @@
 
 ArmCheck shows which apps on your Windows 11 on ARM PC are running natively and which are using emulation. It also checks the architecture recorded in an executable or installer.
 
-[Download the Windows ARM64 installer](https://github.com/Reyansh-Varshney/ArmCheck/releases/latest)
+[Project website](https://armcheck.vercel.app) · [Download the Windows ARM64 installer](https://github.com/Reyansh-Varshney/ArmCheck/releases/latest)
 
 ## Install and run
 
@@ -64,5 +64,6 @@ cargo run --locked -p armcheck-cli -- check "C:\path\to\app.exe"
 | [core](core) | Windows process scanner, PE file inspector, and shared data model |
 | [cli](cli) | Terminal interface for the same Rust core |
 | [app](app) | React, TypeScript, and Tauri desktop interface |
+| [site](site) | Public project website deployed to Vercel |
 
 See [the architecture notes](ARCHITECTURE.md), [the changelog](CHANGELOG.md), and [the contributor guide](CONTRIBUTING.md). ArmCheck is available under the [MIT license](LICENSE).

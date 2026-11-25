@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="See which apps run natively and which use emulation on Windows 11 on ARM. ArmCheck is free, open source, and runs locally.">
+  <meta name="theme-color" content="#f8faff">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="ArmCheck — Know what’s running native">
+  <meta property="og:description" content="See how your apps run on Windows 11 on ARM.">
+  <link rel="icon" href="./assets/icon.png" type="image/png">
+  <link rel="stylesheet" href="./styles.css">
+  <script defer src="./preview.js"></script>
+  <title>ArmCheck — Know what’s running native</title>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="container bar">
+      <a class="brand" href="./"><img src="./assets/icon.png" width="46" height="46" alt=""><span>ArmCheck</span></a>
+      <nav aria-label="Main navigation">
+        <a href="#overview">Overview</a>
+        <a href="#questions">Questions</a>
+        <a href="https://github.com/Reyansh-Varshney/ArmCheck">Source <span aria-hidden="true">↗</span></a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="container hero-layout">
+        <div class="hero-copy">
+          <h1 id="hero-title">Know what’s<br>running <em>native.</em></h1>
+          <p>See which apps run natively and which use emulation on Windows on ARM.</p>
+          <div class="actions">
+            <a class="button primary" href="https://github.com/Reyansh-Varshney/ArmCheck/releases/latest">
+              <span class="download" aria-hidden="true">↓</span>
+              Download for ARM64
+            </a>
+            <a class="button secondary" href="https://github.com/Reyansh-Varshney/ArmCheck">View source</a>
+          </div>
+          <p class="requirement">Windows 11 on ARM</p>
+        </div>
+
+        <figure class="preview">
+          <div class="app-window" aria-label="Interactive ArmCheck preview">
+            <div class="title-bar">
+              <span><img src="./assets/icon.png" alt="" width="25" height="25">ArmCheck</span>
+              <span class="window-controls" aria-hidden="true">− <span>□</span> ×</span>
+            </div>
+            <div class="app-content">
+              <h2>Running apps</h2>
+              <div class="preview-filters">
+                <label class="select-wrap">
+                  <span class="visually-hidden">Example app scope</span>
+                  <select id="scope">
+                    <option value="desktop">Desktop apps</option>
+                    <option value="all">All processes</option>
+                  </select>
+                </label>
+                <label class="select-wrap">
+                  <span class="visually-hidden">Example architecture filter</span>
+                  <select id="architecture">
+                    <option value="all">All architectures</option>
+                    <option value="native">Native</option>
+                    <option value="emulated">Uses emulation</option>
+                    <option value="unknown">Couldn’t verify</option>
+                  </select>
+                </label>
+              </div>
+              <ul class="app-list" aria-label="Example scan results">
+                <li data-scope="desktop" data-type="native">
+                  <span class="mini-icon mini-file" aria-hidden="true"></span>
+                  <span class="app-name"><strong>Notepad</strong><small>ARM64</small></span>
+                  <span class="status native">Native</span>
+                </li>
+                <li data-scope="desktop" data-type="native">
+                  <span class="mini-icon mini-folder" aria-hidden="true"></span>
+                  <span class="app-name"><strong>File Explorer</strong><small>ARM64</small></span>
+                  <span class="status native">Native</span>
+                </li>
+                <li data-scope="desktop" data-type="emulated">
+                  <span class="mini-icon mini-window" aria-hidden="true"></span>
+                  <span class="app-name"><strong>Contoso Studio</strong><small>x64</small></span>
+                  <span class="status emulated">Emulated</span>
+                </li>
+                <li data-scope="desktop" data-type="unknown">
+                  <span class="mini-icon mini-window" aria-hidden="true"></span>
+                  <span class="app-name"><strong>Legacy Tool</strong><small>Access denied</small></span>
+                  <span class="status unknown">Couldn’t verify</span>
+                </li>
+                <li data-scope="background" data-type="unknown" hidden>
+                  <span class="mini-icon mini-window" aria-hidden="true"></span>
+                  <span class="app-name"><strong>System process</strong><small>Access denied</small></span>
+                  <span class="status unknown">Couldn’t verify</span>
+                </li>
+              </ul>
+              <p class="visually-hidden" id="preview-count" aria-live="polite">4 example processes shown.</p>
+            </div>
+          </div>
+          <figcaption>Interactive preview with example data</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="overview" class="overview" aria-labelledby="overview-title">
+      <div class="container overview-content">
+        <h2 id="overview-title">See how your apps run</h2>
+        <div class="features">
+          <article>
+            <span class="feature-icon display-icon" aria-hidden="true"></span>
+            <h3>Know what’s emulated</h3>
+            <p>See which running apps use x86 or x64 emulation and which run natively on ARM64.</p>
+          </article>
+          <article>
+            <span class="feature-icon layers-icon" aria-hidden="true"></span>
+            <h3>Understand the result</h3>
+            <p>See why a process couldn’t be verified. Open technical details for the evidence behind the label.</p>
+          </article>
+          <article>
+            <span class="feature-icon document-icon" aria-hidden="true"></span>
+            <h3>Check a file</h3>
+            <p>Drop an executable or installer into ArmCheck to inspect the architecture declared in its Windows file header.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="questions" class="container questions" aria-labelledby="questions-title">
+      <h2 id="questions-title">Questions</h2>
+      <div class="faq">
+        <details>
+          <summary>Which PCs can run ArmCheck?</summary>
+          <p>ArmCheck is built for Windows 11 on ARM64. It uses Microsoft Edge WebView2 for its desktop interface.</p>
+        </details>
+        <details>
+          <summary>Why can’t ArmCheck verify some apps?</summary>
+          <p>Windows restricts access to some processes. Files that use hybrid ARM formats or give conflicting architecture evidence also need an unverified label.</p>
+        </details>
+        <details>
+          <summary>Where does the scan run?</summary>
+          <p>The desktop app scans locally on your PC. It doesn’t upload your running apps or executable paths.</p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container bar">
+      <a class="brand" href="./"><img src="./assets/icon.png" width="34" height="34" alt="">ArmCheck</a>
+      <a href="https://github.com/Reyansh-Varshney/ArmCheck">Source <span aria-hidden="true">↗</span></a>
+    </div>
+  </footer>
+</body>
+</html>
