@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Window events and visibility for ArmCheck",
+  "windows": ["main"],
+  "permissions": ["core:event:default", "core:window:allow-is-visible", "core:window:allow-is-minimized", "core:window:allow-theme"]
+}

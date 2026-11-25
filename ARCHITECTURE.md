@@ -1,6 +1,6 @@
 # ArmCheck architecture
 
-`armcheck-core` owns the data model, file inspection, and Windows process scanning. `armcheck-cli` provides terminal input and output. The Tauri app will also call the core library when it joins the workspace in Milestone 3. Both current crates build for `aarch64-pc-windows-msvc` by default.
+`armcheck-core` owns the data model, file inspection, and Windows process scanning. `armcheck-cli` provides terminal input and output. The Tauri app in app/src-tauri calls the core library and hosts a React frontend in WebView2. All three crates build for `aarch64-pc-windows-msvc` by default.
 
 ## File and process results
 
@@ -31,3 +31,7 @@ An `App` groups processes that share an exact executable path. Different executa
 Each CLI scan takes two snapshots with a 300 ms pause. CPU is `100 × Δ(kernel time + user time) ÷ (elapsed time × active logical processors)`. The numerator and denominator use seconds. Elapsed time is measured between the two timing reads for each process. RAM is the working set read during the second snapshot.
 
 A sample pair must match on PID and process creation time. A process that starts or exits during the window remains visible with both CPU and RAM unavailable. A group displays a total for a metric when all its child measurements for that metric are available.
+
+## Desktop refresh
+
+React schedules a scan after the previous scan completes. The Rust command verifies that the native window is visible and unminimized before collecting a snapshot, during the sampling pause, and before reading the results. The next scan starts when the window becomes visible again. The desktop layer caches the Windows icons it extracts from process image paths for the running-app list.

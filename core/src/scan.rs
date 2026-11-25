@@ -52,16 +52,36 @@ struct Observation {
 }
 
 pub fn scan_running() -> Result<Vec<App>, ScanError> {
+    Ok(scan_running_while(|| true)?.unwrap_or_default())
+}
+
+/// Checks whether the caller still wants a scan before each snapshot and between sampling ticks.
+pub fn scan_running_while(still_needed: impl Fn() -> bool) -> Result<Option<Vec<App>>, ScanError> {
+    if !still_needed() {
+        return Ok(None);
+    }
     let logical_processors = windows::active_processor_count();
     let first = windows::snapshot(false)?;
-    thread::sleep(SAMPLE_PAUSE);
+    let sampling_started = Instant::now();
+    while let Some(remaining) = SAMPLE_PAUSE.checked_sub(sampling_started.elapsed()) {
+        if !still_needed() {
+            return Ok(None);
+        }
+        thread::sleep(remaining.min(Duration::from_millis(60)));
+    }
+    if !still_needed() {
+        return Ok(None);
+    }
     let second = windows::snapshot(true)?;
+    if !still_needed() {
+        return Ok(None);
+    }
     let windows_directory = windows::windows_directory();
-    Ok(group_apps(
+    Ok(Some(group_apps(
         build_processes(first, second, logical_processors),
         windows_directory.as_deref(),
         version::product_version,
-    ))
+    )))
 }
 
 fn build_processes(
