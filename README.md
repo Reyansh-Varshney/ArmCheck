@@ -76,3 +76,8 @@ cargo run --locked -p armcheck-cli -- check "C:\path\to\app.exe"
 | [site](site) | Public project website deployed to Vercel |
 
 See [the architecture notes](ARCHITECTURE.md), [the changelog](CHANGELOG.md), and [the contributor guide](CONTRIBUTING.md). ArmCheck is available under the [MIT license](LICENSE).
+
+## Contributors
+
+- [Reyansh Varshney](https://reyansh-varshney.vercel.app/) — creator and maintainer
+- [OpenAI Codex](https://openai.com/codex/) — AI development assistance
