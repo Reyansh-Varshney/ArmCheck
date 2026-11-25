@@ -6,6 +6,15 @@ ArmCheck shows which apps on your Windows 11 on ARM PC are running natively and 
 
 [Project website](https://armcheck.vercel.app) · [Download the Windows ARM64 installer](https://github.com/Reyansh-Varshney/ArmCheck/releases/latest)
 
+<details>
+<summary>Desktop preview</summary>
+
+<img src="assets/armcheck-desktop.png" alt="ArmCheck listing one native app and two x64 test apps in Desktop apps view" width="680">
+
+The preview shows a local smoke test with two controlled x64 applications.
+
+</details>
+
 ## Install and run
 
 Download the `ArmCheck_*_arm64-setup.exe` asset from Releases and open it on a Windows 11 ARM64 device. The installed app runs natively and uses the Microsoft Edge WebView2 Runtime.
