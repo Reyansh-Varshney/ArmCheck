@@ -23,3 +23,5 @@ Test UI changes in the native app. Minimize and restore the window if a change a
 The [Windows ARM64 workflow](.github/workflows/arm64.yml) validates pull requests and pushes to `main`. Manually running the workflow or pushing a version tag also builds the installer, checks the app's PE machine field, and uploads the executable, installer, and checksum file as a workflow artifact.
 
 Before publishing, use a matching app version and Git tag, review [the changelog](CHANGELOG.md), and run a smoke test on Windows ARM64. Attach the reviewed artifacts and checksums to the matching GitHub Release.
+
+Changes prepared with AI assistance should be reviewed by a maintainer before merging.
